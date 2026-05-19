@@ -28,6 +28,7 @@ You MUST create a task for each of these items and complete them in order:
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
+7a. **(Orchestrated mode only)** If `WENS_ORCHESTRATED=1`, run the external spec-review loop (see "Orchestrated Mode: Spec Review Loop" section below) before step 8.
 8. **User reviews written spec** — ask user to review the spec file before proceeding
 9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
 
@@ -162,3 +163,23 @@ A question about a UI topic is not automatically a visual question. "What does p
 
 If they agree to the companion, read the detailed guide before proceeding:
 `skills/brainstorming/visual-companion.md`
+
+## Orchestrated Mode: Spec Review Loop
+
+When the agent is running inside a `using-wens-superpowers` session (the orchestrator skill loaded this skill via auto-chain and declared `WENS_ORCHESTRATED=1` + `WENS_MODE=a|b` at session entry — the marker is carried by agent context, **not** by shell environment variables, since Bash tool calls do not share shells), perform an external spec-review loop after the inline self-review and **before** asking the user to review the spec.
+
+**Loop body, round N (starts at 1, resets each fresh entry to brainstorming):**
+
+1. Render `skills/using-wens-superpowers/references/spec-review-prompt.md` by substituting `{{spec_path}}` (absolute) and `{{round}}` (`N`). Substitute inline — read the template with the Read tool, perform string substitution in your own context, do not run `sed`.
+2. Pipe the rendered prompt to `skills/using-wens-superpowers/scripts/dispatch.sh spec-review-r$N` via stdin. Set `WENS_DISPATCH_TIMEOUT=600` for this call.
+3. The Bash tool's stderr output will contain `prompt=<path>` and `out=<path>` lines. Parse them. Then Read the `out=<path>` file.
+4. Parse the leading YAML frontmatter for `status`.
+   - `status: PASS` → exit loop, proceed to user-review (step 8).
+   - `status: ISSUES_FOUND` → for each issue, edit the spec file inline (you, the main agent, do the rewrites — do NOT dispatch them). Increment `N`. Repeat.
+   - Frontmatter missing or malformed → treat as `ISSUES_FOUND` with a synthetic issue noting the format violation. Re-dispatch with a stricter reminder appended to the rendered prompt.
+   - `dispatch.sh` non-zero exit (including timeout) → treat as `ISSUES_FOUND` with a synthetic issue containing the stderr tail. Retry once. On second failure, surface to user via `AskUserQuestion`.
+5. **Round 10 gate:** if `N` reaches 10 without `PASS`, use `AskUserQuestion` to ask the user: continue (resets counter, allows another 10), pause (return control), or accept-as-is (treat as PASS). Do not loop past 10 without user direction.
+
+**Auto-chain unchanged.** After the user-review gate (step 8) approves, continue to step 9 (invoke writing-plans) exactly as in standard mode.
+
+**Why this lives in brainstorming, not in `using-wens-superpowers`:** the auto-chain (`writing-plans` → `subagent-driven-development`) carries the marker through, so each downstream skill checks `WENS_ORCHESTRATED` and runs its own orchestrated branch. The orchestrator skill only sets the marker and invokes brainstorming; the chain does the rest.
