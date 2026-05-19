@@ -24,6 +24,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 TMPDIR_ABS="$REPO_ROOT/docs/tmp"
 mkdir -p "$TMPDIR_ABS"
 
+SLUG=$(printf '%s' "$SLUG" | sed 's/[^A-Za-z0-9._-]/-/g')
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 BASE="${TS}_$$-${SLUG}"
 PROMPT="$TMPDIR_ABS/${BASE}.md"

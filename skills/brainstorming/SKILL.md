@@ -28,7 +28,7 @@ You MUST create a task for each of these items and complete them in order:
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-7a. **(Orchestrated mode only)** If `WENS_ORCHESTRATED=1`, run the external spec-review loop (see "Orchestrated Mode: Spec Review Loop" section below) before step 8.
+7a. **(Orchestrated mode only)** When running inside a `using-wens-superpowers` session (orchestrated mode — `WENS_ORCHESTRATED=1` declared at session entry, carried in agent context not shell env), run the external spec-review loop (see "Orchestrated Mode: Spec Review Loop" section below) before step 8.
 8. **User reviews written spec** — ask user to review the spec file before proceeding
 9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
 
