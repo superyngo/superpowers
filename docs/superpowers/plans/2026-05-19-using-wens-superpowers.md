@@ -370,17 +370,10 @@ Write `skills/using-wens-superpowers/scripts/dispatch.sh`:
 
 ```sh
 #!/bin/sh
-# dispatch.sh — wrapper around `dispatch-agent dispatch -f <file>` used by the
-# using-wens-superpowers skill.
-#
-# Usage:  cat prompt.md | dispatch.sh <phase-slug>
-#         echo "..." | WENS_DISPATCH_TIMEOUT=1200 dispatch.sh implement-task3
-#
-# Writes prompt body (stdin) to docs/tmp/<UTC-ts>_<pid>-<slug>.md
-# Writes dispatch-agent stdout to docs/tmp/<UTC-ts>_<pid>-<slug>.out.md
-# Prints `prompt=<path>` and `out=<path>` to stderr for the caller to parse.
-# Exit code: dispatch-agent's exit code, or 127 if dispatch-agent not on PATH,
-#            or 2 if argv is malformed.
+# dispatch.sh — wraps `dispatch-agent dispatch -f` for using-wens-superpowers.
+# Reads prompt from stdin; writes prompt + .out.md to docs/tmp/<ts>_<pid>-<slug>.
+# Emits `prompt=...` and `out=...` on stderr. Exit code mirrors dispatch-agent
+# (127 if not on PATH, 2 if argv malformed). $WENS_DISPATCH_TIMEOUT (default 600).
 
 set -u
 
@@ -398,10 +391,8 @@ if ! command -v dispatch-agent >/dev/null 2>&1; then
   exit 127
 fi
 
-# Resolve repo root (git) or fall back to cwd.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-TMPDIR_REL="docs/tmp"
-TMPDIR_ABS="$REPO_ROOT/$TMPDIR_REL"
+TMPDIR_ABS="$REPO_ROOT/docs/tmp"
 mkdir -p "$TMPDIR_ABS"
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
@@ -409,20 +400,13 @@ BASE="${TS}_$$-${SLUG}"
 PROMPT="$TMPDIR_ABS/${BASE}.md"
 OUT="$TMPDIR_ABS/${BASE}.out.md"
 
-# Capture stdin to prompt file.
 cat > "$PROMPT"
-
-# Emit artifact paths on stderr for the caller.
 echo "prompt=$PROMPT" >&2
 echo "out=$OUT" >&2
 
 TIMEOUT="${WENS_DISPATCH_TIMEOUT:-600}"
-
-# Run dispatch-agent; capture stdout to OUT, drop noise from this process's stdout.
 dispatch-agent dispatch -f "$PROMPT" --timeout "$TIMEOUT" > "$OUT" 2>>"$OUT"
-RC=$?
-
-exit "$RC"
+exit $?
 ```
 
 ```bash
@@ -438,7 +422,7 @@ Expected: `Results: 5 passed, 0 failed`. If any test fails, fix the script and r
 - [ ] **Step 3: Sanity-check line count**
 
 Run: `wc -l skills/using-wens-superpowers/scripts/dispatch.sh`
-Expected: ≤ 45 lines (spec §11.6 target ~40; +5 budget for PATH guard and usage block).
+Expected: ≤ 45 lines (spec §11.6 target ~40; +5 budget for PATH guard).
 
 - [ ] **Step 4: Commit**
 
@@ -874,7 +858,7 @@ Mode (b) requires the operator's `dispatch-agent` config to have bypass flags en
 
 - [ ] **Step 2: Verify**
 
-Run: `grep -nE 'Orchestrated Mode \(WENS_ORCHESTRATED\)|WENS_MODE' skills/subagent-driven-development/SKILL.md`
+Run: `grep -nE 'Orchestrated Mode \(running inside|WENS_MODE' skills/subagent-driven-development/SKILL.md`
 Expected: 2+ matches.
 
 - [ ] **Step 3: Commit**
@@ -1154,7 +1138,7 @@ grep -E '^docs/tmp/' .gitignore
 
 Expected:
 - `SKILL.md` ≤ 150 lines
-- `dispatch.sh` ≤ 50 lines
+- `dispatch.sh` ≤ 45 lines
 - `.gitignore` has `docs/tmp/`
 
 - [ ] **Step 5: Push to origin (fork)**
