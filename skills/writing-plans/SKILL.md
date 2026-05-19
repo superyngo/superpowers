@@ -131,6 +131,23 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
+## Orchestrated Mode: Plan Verification Loop
+
+When the agent is running inside a `using-wens-superpowers` session (orchestrated mode — `WENS_ORCHESTRATED=1` declared at session entry; the marker is carried by agent context, not by shell env, since Bash tool calls do not share shells), run an external plan-vs-spec consistency check after Self-Review and **before** the Execution Handoff. Same loop shape as brainstorming's spec-review loop.
+
+**Round N (starts at 1):**
+
+1. Render `skills/using-wens-superpowers/references/plan-verify-prompt.md` by substituting `{{spec_path}}` (absolute), `{{plan_path}}` (absolute), and `{{round}}` (`N`). Inline substitution by the main agent — no `sed`.
+2. Pipe the rendered prompt to `skills/using-wens-superpowers/scripts/dispatch.sh plan-verify-r$N`. `WENS_DISPATCH_TIMEOUT=600`.
+3. Parse the `out=<path>` file's YAML frontmatter for `status`.
+   - `PASS` → exit loop, proceed to Execution Handoff.
+   - `ISSUES_FOUND` → main agent edits the plan inline, increment `N`, loop.
+   - Malformed frontmatter → synthesize `ISSUES_FOUND` with format-violation issue; re-dispatch with stricter reminder.
+   - Non-zero `dispatch.sh` exit → synthesize `ISSUES_FOUND` with stderr tail; retry once; on second failure `AskUserQuestion`.
+4. **Round 10 gate:** same as brainstorming — `AskUserQuestion` to continue / pause / accept-as-is. Per-stage counter, not shared with brainstorming.
+
+**Execution Handoff in orchestrated mode:** Do NOT call `AskUserQuestion` for execution mode. Auto-select Subagent-Driven (subagent-driven-development) — the orchestrator already collected the `WENS_MODE=a|b` choice at session start, and subagent-driven-development branches on that internally.
+
 ## Execution Handoff
 
 After saving the plan, offer execution choice:
