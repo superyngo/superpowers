@@ -194,6 +194,7 @@ already use it in another harness.
 **Meta**
 - **writing-skills** - Create new skills following best practices (includes testing methodology)
 - **using-superpowers** - Introduction to the skills system
+- **using-wens-superpowers** *(this fork)* - Orchestrates the standard flow with `dispatch-agent`-driven external review at each stage
 
 ## Philosophy
 
