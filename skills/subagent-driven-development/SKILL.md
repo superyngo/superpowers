@@ -264,6 +264,50 @@ Done!
 - Dispatch fix subagent with specific instructions
 - Don't try to fix manually (context pollution)
 
+## Orchestrated Mode (running inside `using-wens-superpowers`)
+
+When the agent is running inside a `using-wens-superpowers` session (marker held by agent context, not by shell env — `WENS_ORCHESTRATED=1` declared at session entry), the per-task loop changes shape. The mode (`WENS_MODE=a` or `WENS_MODE=b`) was selected by the orchestrator at session entry and is likewise carried in agent context.
+
+**Bypass notice.** In orchestrated mode, the in-skill `./spec-reviewer-prompt.md` and `./code-quality-reviewer-prompt.md` templates are **not used**. Reviewers run as `dispatch-agent` calls using:
+
+- `skills/using-wens-superpowers/references/spec-compliance-review-prompt.md`
+- `skills/using-wens-superpowers/references/code-review-prompt.md`
+
+Likewise, mode (b) bypasses `./implementer-prompt.md` in favor of `skills/using-wens-superpowers/references/implement-task-prompt.md`.
+
+### Mode (a) — reviewers dispatched, implementer is a Task-tool subagent
+
+Per task:
+
+1. Implementer: invoke Task-tool subagent exactly as in standard mode (`./implementer-prompt.md` *is* used here).
+2. After implementer reports COMPLETED, run `git diff --name-only HEAD` from the previous task's commit to collect `files_changed`. Add any files the implementer reported but `git diff` missed.
+3. Render `references/spec-compliance-review-prompt.md` (orchestrator skill) with `{{spec_path}}`, `{{task_body}}`, `{{files_changed}}` (joined as a bullet list). Inline substitution by the main agent.
+4. Pipe to `skills/using-wens-superpowers/scripts/dispatch.sh spec-compliance-task<i>-r$N`. `WENS_DISPATCH_TIMEOUT=600`.
+5. Parse `out=<path>` YAML for `status`. `PASS` → step 7. `ISSUES_FOUND` → re-invoke the same Task-tool implementer subagent with the issue list appended to its prompt, then re-dispatch the spec-compliance reviewer. Increment `N`.
+6. Round-10 gate (per-task, per-review-stage). `AskUserQuestion`: continue (reset N), skip-task (mark BLOCKED), abort.
+7. Render `references/code-review-prompt.md` with `{{plan_path}}`, `{{task_body}}`, `{{files_changed}}`. Pipe to `dispatch.sh code-review-task<i>-r$N`. `WENS_DISPATCH_TIMEOUT=600`.
+8. Same loop semantics as step 5–6 for code review.
+9. Mark task complete in TodoWrite, proceed to next task.
+
+### Mode (b) — implementer also dispatched
+
+Per task, step 1 changes:
+
+1. Render `references/implement-task-prompt.md` (orchestrator skill) with `{{spec_path}}`, `{{plan_path}}`, `{{task_body}}`, `{{repo_root}}`. Pipe to `skills/using-wens-superpowers/scripts/dispatch.sh implement-task<i>`. `WENS_DISPATCH_TIMEOUT=1200`.
+2. Parse output's YAML for `status: COMPLETED | BLOCKED`. On `BLOCKED`, surface notes to the user via `AskUserQuestion` (continue with edits / retry / abort).
+3. Run `git diff --name-only HEAD` (from the previous task's commit) and merge with the implementer's `files_changed` list — the merged list is authoritative for reviewer prompts.
+4. Continue with step 3 of mode (a) (spec-compliance review) onward.
+
+Re-dispatching the implementer on review issues in mode (b): re-render `implement-task-prompt.md` with the issue list appended at the end, dispatch again.
+
+### Per-task round counter
+
+Each task starts with `N=1` for both review stages (spec compliance and code quality each have their own counter). The 10-round gate applies independently per stage.
+
+### Risk note for mode (b)
+
+Mode (b) requires the operator's `dispatch-agent` config to have bypass flags enabled (e.g., `--dangerously-skip-permissions`) so the third-party agent can write files. The orchestrator skill (`using-wens-superpowers`) surfaces this risk once at session start; this section restates it for in-context clarity.
+
 ## Integration
 
 **Required workflow skills:**
