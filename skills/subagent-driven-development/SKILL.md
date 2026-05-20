@@ -275,6 +275,58 @@ When the agent is running inside a `using-wens-superpowers` session (marker held
 
 Likewise, mode (b) bypasses `./implementer-prompt.md` in favor of `skills/using-wens-superpowers/references/implement-task-prompt.md`.
 
+## Mode (b) Cost Estimate
+
+Before TaskCreate (next section) and before the first dispatch in mode (b), count the plan tasks by scanning the plan file:
+
+```sh
+N=$(rg -c '^## Task ' <plan-file>)
+```
+
+Then surface to the user:
+
+> 「將透過 agd dispatch N 個 tasks，每個 task 含 1 implementer + 2 reviewers = 3N 次 dispatch。預估 3N 次 agd 呼叫，不含 review 迭代。確認繼續嗎？」
+
+Use `AskUserQuestion` with options: 繼續 / 中止 / 改用 mode (a).
+
+On abort, no TaskCreate has yet been made, so no cleanup needed. On "改用 mode (a)" the main agent re-enters this section under mode (a), which skips this gate but still runs the TaskCreate mandate.
+
+Mode (a) does not perform this gate. Ordering is therefore:
+**plan in hand → cost-gate (mode b only) → TaskCreate → first dispatch.**
+
+## Orchestrated Mode — Task Tracking (MANDATORY)
+
+Once the cost estimate gate (mode b) returns "繼續" — or immediately in mode a — you MUST call `TaskCreate` once per plan task, using the plan's `## Task N:` header text as the task subject. This is not optional — the user cannot see your progress otherwise, and a context compaction loses your in-memory state.
+
+Use exactly this sequence per task:
+
+1. `TaskUpdate <id> status=in_progress` before dispatching the implementer (mode b) or before starting local implementation (mode a).
+2. After spec-compliance review PASS: keep status `in_progress`.
+3. After code review PASS: `TaskUpdate <id> status=completed`.
+4. If either review returns ISSUES_FOUND: keep `in_progress` and iterate. Do NOT create sub-tasks per fix iteration — that explodes the list.
+
+The previous wording referenced `TodoWrite`. That is the legacy name; use whatever the current harness exposes as `TaskCreate` / `TaskUpdate` / `TaskList`.
+
+## Tolerant Parsing of Reviewer Output
+
+When reading reviewer `out.md`, apply in order:
+
+1. If the body is wrapped in ```yaml ... ``` fences, strip them.
+2. Parse the leading YAML frontmatter (between `---` lines).
+3. If frontmatter is absent or unparseable: treat as `status: ISSUES_FOUND` with a single synthetic issue noting the format violation. Do NOT retry dispatch — proceed to fix-iteration with the body as freeform text.
+4. For each issue's `severity`:
+   - If in {blocker, major, minor}: accept as-is.
+   - Otherwise (e.g. medium, low, nit, pass-note): coerce to `minor` and note the coercion to the user once per session.
+
+## Git Operations in Orchestrated Mode
+
+The dispatched implementer (mode b) decides its own commit boundary. Any additional commits the main agent creates (rare — typically only for finalization docs) MUST use:
+
+    git add <specific-file>...
+    git commit -m "..."
+
+Do NOT use `git commit -am` or `git add -A`. The orchestrated session has generated artifacts in `docs/tmp/` (gitignored) plus working-tree changes from recently dispatched tasks — `-am` will sweep unrelated edits into the wrong commit.
+
 ### Mode (a) — reviewers dispatched, implementer is a Task-tool subagent
 
 Per task:
@@ -282,19 +334,45 @@ Per task:
 1. Implementer: invoke Task-tool subagent exactly as in standard mode (`./implementer-prompt.md` *is* used here).
 2. After implementer reports COMPLETED, run `git diff --name-only HEAD` from the previous task's commit to collect `files_changed`. Add any files the implementer reported but `git diff` missed.
 3. Render `references/spec-compliance-review-prompt.md` (orchestrator skill) with `{{spec_path}}`, `{{task_body}}`, `{{files_changed}}` (joined as a bullet list). Inline substitution by the main agent.
-4. Pipe to `skills/using-wens-superpowers/scripts/dispatch.sh spec-compliance-task<i>-r$N`. `WENS_DISPATCH_TIMEOUT=600`.
-5. Parse `out=<path>` YAML for `status`. `PASS` → step 7. `ISSUES_FOUND` → re-invoke the same Task-tool implementer subagent with the issue list appended to its prompt, then re-dispatch the spec-compliance reviewer. Increment `N`.
+4. Pipe to `skills/using-wens-superpowers/scripts/dispatch.sh spec-compliance-task<i>-r$N`. tier defaults apply (see `scripts/dispatch.sh`); set `WENS_DISPATCH_TIMEOUT` only to override.
+5. Parse `out=<path>` YAML for `status` (use tolerant parser above). `PASS` → step 7. `ISSUES_FOUND` → re-invoke the same Task-tool implementer subagent with the issue list appended to its prompt, then re-dispatch the spec-compliance reviewer. Increment `N`.
 6. Round-10 gate (per-task, per-review-stage). `AskUserQuestion`: continue (reset N), skip-task (mark BLOCKED), abort.
-7. Render `references/code-review-prompt.md` with `{{plan_path}}`, `{{task_body}}`, `{{files_changed}}`. Pipe to `dispatch.sh code-review-task<i>-r$N`. `WENS_DISPATCH_TIMEOUT=600`.
+7. Render `references/code-review-prompt.md` with `{{plan_path}}`, `{{task_body}}`, `{{files_changed}}`. Pipe to `dispatch.sh code-review-task<i>-r$N`. tier defaults apply (see `scripts/dispatch.sh`); set `WENS_DISPATCH_TIMEOUT` only to override.
 8. Same loop semantics as step 5–6 for code review.
-9. Mark task complete in TodoWrite, proceed to next task.
+9. Mark task complete via `TaskUpdate <id> status=completed`, proceed to next task.
+
+For each reviewer dispatch:
+
+- Populate `{{stage}}` with `task N` (where N is the current task number).
+- Populate `{{plan_task_headers}}` with the output of:
+
+  ```sh
+  rg '^## Task ' <plan-file>
+  ```
+
+  If the plan path is not in `docs/superpowers/plans/`, fall back to the task subjects from `TaskList`.
+
+- Populate `{{round}}` with the current round integer string (`"1"`, `"2"`, ...).
+
+For each reviewer dispatch beyond round 1:
+
+- Set `{{prev_round}}` = `{{round}} - 1` as an integer string.
+- Read the previous out.md.
+- Extract the YAML `issues:` list (use the tolerant parser above to read it).
+- Inline-substitute into `{{r1_issues_inline}}` (despite the historical name, this carries the previous round's issues for any N ≥ 2).
+- Strip the `<!-- ROUND-1-BLOCK -->...<!-- /ROUND-1-BLOCK -->` block from the rendered template; keep only the `<!-- R2-PLUS-BLOCK -->...<!-- /R2-PLUS-BLOCK -->` block.
+
+For round-1 reviewer dispatches:
+
+- Strip the `<!-- R2-PLUS-BLOCK -->...<!-- /R2-PLUS-BLOCK -->` block; keep only the `<!-- ROUND-1-BLOCK -->...<!-- /ROUND-1-BLOCK -->` block.
+- Do not substitute `{{prev_round}}` or `{{r1_issues_inline}}` (the slots live only inside the R2+ block).
 
 ### Mode (b) — implementer also dispatched
 
 Per task, step 1 changes:
 
-1. Render `references/implement-task-prompt.md` (orchestrator skill) with `{{spec_path}}`, `{{plan_path}}`, `{{task_body}}`, `{{repo_root}}`. Pipe to `skills/using-wens-superpowers/scripts/dispatch.sh implement-task<i>`. `WENS_DISPATCH_TIMEOUT=1200`.
-2. Parse output's YAML for `status: COMPLETED | BLOCKED`. On `BLOCKED`, surface notes to the user via `AskUserQuestion` (continue with edits / retry / abort).
+1. Render `references/implement-task-prompt.md` (orchestrator skill) with `{{spec_path}}`, `{{plan_path}}`, `{{task_body}}`, `{{repo_root}}`. Pipe to `skills/using-wens-superpowers/scripts/dispatch.sh implement-task<i>`. tier defaults apply (see `scripts/dispatch.sh`); set `WENS_DISPATCH_TIMEOUT` only to override.
+2. Parse output's YAML for `status: COMPLETED | BLOCKED` (use tolerant parser above). On `BLOCKED`, surface notes to the user via `AskUserQuestion` (continue with edits / retry / abort). `dispatch.sh` retries empty / no-frontmatter output internally; main agent handles only non-zero exit and post-retry failures.
 3. Run `git diff --name-only HEAD` (from the previous task's commit) and merge with the implementer's `files_changed` list — the merged list is authoritative for reviewer prompts.
 4. Continue with step 3 of mode (a) (spec-compliance review) onward.
 
@@ -303,6 +381,11 @@ Re-dispatching the implementer on review issues in mode (b): re-render `implemen
 ### Per-task round counter
 
 Each task starts with `N=1` for both review stages (spec compliance and code quality each have their own counter). The 10-round gate applies independently per stage.
+
+### Behavior reference
+
+- tier defaults apply (see `scripts/dispatch.sh`); set `WENS_DISPATCH_TIMEOUT` only to override.
+- `dispatch.sh` retries empty / no-frontmatter output internally; main agent handles only non-zero exit and post-retry failures.
 
 ### Risk note for mode (b)
 
