@@ -978,12 +978,13 @@ rg -q '`agd`' skills/using-wens-superpowers/SKILL.md
 
 # C. dispatch.sh syntax + tokens (interpreter-matched: shebang is /bin/sh)
 sh -n skills/using-wens-superpowers/scripts/dispatch.sh
-rg -q 'TIER=' skills/using-wens-superpowers/scripts/dispatch.sh
+rg -q 'tier=' skills/using-wens-superpowers/scripts/dispatch.sh   # matches the runtime echo line
 rg -q 'retry=1 reason=' skills/using-wens-superpowers/scripts/dispatch.sh
 
-# D. Reviewer template blocks
+# D. Reviewer template blocks (both the spec's `verify-only mode` text and our explicit marker — belt-and-suspenders)
 test "$(rg -l 'Scope Guard \(MUST FOLLOW\)' skills/using-wens-superpowers/references/ | wc -l)" -eq 5
 test "$(rg -l 'CLOSED VOCABULARY' skills/using-wens-superpowers/references/ | wc -l)" -eq 4
+test "$(rg -l 'verify-only mode' skills/using-wens-superpowers/references/ | wc -l)" -eq 4
 test "$(rg -l 'R2-PLUS-BLOCK' skills/using-wens-superpowers/references/ | wc -l)" -eq 4
 test "$(rg -l 'plan_task_headers' skills/using-wens-superpowers/references/ | wc -l)" -eq 3
 
