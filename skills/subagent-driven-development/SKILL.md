@@ -268,7 +268,7 @@ Done!
 
 When the agent is running inside a `using-wens-superpowers` session (marker held by agent context, not by shell env — `WENS_ORCHESTRATED=1` declared at session entry), the per-task loop changes shape. The mode (`WENS_MODE=a` or `WENS_MODE=b`) was selected by the orchestrator at session entry and is likewise carried in agent context.
 
-**Bypass notice.** In orchestrated mode, the in-skill `./spec-reviewer-prompt.md` and `./code-quality-reviewer-prompt.md` templates are **not used**. Reviewers run as `dispatch-agent` calls using:
+**Bypass notice.** In orchestrated mode, the in-skill `./spec-reviewer-prompt.md` and `./code-quality-reviewer-prompt.md` templates are **not used**. Reviewers run via `skills/using-wens-superpowers/scripts/dispatch.sh` (which wraps `agd`), using:
 
 - `skills/using-wens-superpowers/references/spec-compliance-review-prompt.md`
 - `skills/using-wens-superpowers/references/code-review-prompt.md`
@@ -389,7 +389,7 @@ Each task starts with `N=1` for both review stages (spec compliance and code qua
 
 ### Risk note for mode (b)
 
-Mode (b) requires the operator's `dispatch-agent` config to have bypass flags enabled (e.g., `--dangerously-skip-permissions`) so the third-party agent can write files. The orchestrator skill (`using-wens-superpowers`) surfaces this risk once at session start; this section restates it for in-context clarity.
+Mode (b) requires the operator's `agd` config to have bypass flags enabled (e.g., `--dangerously-skip-permissions`) so the third-party agent can write files. The orchestrator skill (`using-wens-superpowers`) surfaces this risk once at session start; this section restates it for in-context clarity.
 
 ## Integration
 

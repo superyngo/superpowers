@@ -1,6 +1,6 @@
 # Implement Task (Mode b — dispatched implementer)
 
-You are implementing one task from an approved implementation plan. The main coordinator is running on a separate session and has delegated this task to you via `dispatch-agent`.
+You are implementing one task from an approved implementation plan. The main coordinator is running on a separate session and has delegated this task to you via `agd`.
 
 **Workspace root:** `{{repo_root}}`
 **Spec:** `{{spec_path}}`
@@ -23,7 +23,7 @@ When in doubt about whether a finding is in scope, omit it.
 
 ## Rules
 
-1. Work directly in `{{repo_root}}`. You may write files. (Your `dispatch-agent` config has bypass flags enabled by the operator.)
+1. Work directly in `{{repo_root}}`. You may write files. (Your `agd` config has bypass flags enabled by the operator.)
 2. Follow the task's TDD steps exactly: write failing test → run it → implement → run again → commit.
 3. Do NOT modify files outside the paths the task lists, unless the task says to.
 4. Do NOT skip the commit step. Use the commit message shown in the task verbatim.
