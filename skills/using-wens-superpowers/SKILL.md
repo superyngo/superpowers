@@ -97,9 +97,7 @@ Rule of thumb: if `dispatch.sh` wrote it, it goes in `docs/tmp/`. If the main ag
 - `references/spec-compliance-review-prompt.md`
 - `references/code-review-prompt.md`
 
-All templates use `{{placeholder}}` substitution rendered inline by the main agent. The output contract (YAML frontmatter with `status`) is documented in each template's footer.
-
-All templates use `{{placeholder}}` substitution rendered inline by the main agent. Placeholders now include `{{stage}}`, `{{plan_task_headers}}`, `{{round}}`, `{{prev_round}}`, and `{{r1_issues_inline}}` in addition to the existing per-template ones. See `skills/subagent-driven-development/SKILL.md` for the rendering contract.
+All templates use `{{placeholder}}` substitution rendered inline by the main agent. The output contract (YAML frontmatter with `status`) is documented in each template's footer. Placeholders now include `{{stage}}`, `{{plan_task_headers}}`, `{{round}}`, `{{prev_round}}`, and `{{r1_issues_inline}}` in addition to the existing per-template ones. See `skills/subagent-driven-development/SKILL.md` for the rendering contract.
 
 ## Finalization
 
