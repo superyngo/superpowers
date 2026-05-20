@@ -1,9 +1,10 @@
 #!/bin/sh
-# dispatch.sh — wraps `dispatch-agent dispatch -f` for using-wens-superpowers.
-# Reads prompt from stdin; writes prompt + .out.md to docs/tmp/<ts>_<pid>-<slug>.
-# Emits `prompt=...` and `out=...` on stderr. Exit code mirrors dispatch-agent
-# (127 if not on PATH, 2 if argv malformed). $WENS_DISPATCH_TIMEOUT (default 600).
-
+# dispatch.sh — wraps `agd dispatch -f` for using-wens-superpowers.
+# Reads prompt from stdin; writes prompt + .out.md to
+# docs/tmp/<ts>_<pid>-<slug>.{md,out.md}. Emits prompt=, out=, timeout=,
+# tier= on stderr (+ retry= on retry). Exit code mirrors agd (127 if not
+# on PATH, 2 if argv malformed). Override per-call via
+# WENS_DISPATCH_TIMEOUT (seconds).
 set -u
 
 SLUG="${1:-}"
@@ -13,9 +14,9 @@ if [ -z "$SLUG" ]; then
   exit 2
 fi
 
-if ! command -v dispatch-agent >/dev/null 2>&1; then
-  echo "dispatch.sh: 'dispatch-agent' not found on PATH." >&2
-  echo "  Install it (https://github.com/superyngo/dispatch-agent or equivalent)" >&2
+if ! command -v agd >/dev/null 2>&1; then
+  echo "dispatch.sh: 'agd' not found on PATH." >&2
+  echo "  Install from https://github.com/superyngo/agd" >&2
   echo "  and ensure it is on \$PATH before re-running." >&2
   exit 127
 fi
@@ -31,9 +32,34 @@ PROMPT="$TMPDIR_ABS/${BASE}.md"
 OUT="$TMPDIR_ABS/${BASE}.out.md"
 
 cat > "$PROMPT"
+
+case "$SLUG" in
+  spec-review*)                          TIER=spec-review;  DEFAULT=900  ;;
+  plan-verify*)                          TIER=plan-verify;  DEFAULT=1200 ;;
+  implement-task*)                       TIER=implement;    DEFAULT=1800 ;;
+  spec-compliance-review*|code-review*)  TIER=review;       DEFAULT=900  ;;
+  *)                                     TIER=review;       DEFAULT=900  ;;
+esac
+TIMEOUT="${WENS_DISPATCH_TIMEOUT:-$DEFAULT}"
+
 echo "prompt=$PROMPT" >&2
 echo "out=$OUT" >&2
+echo "timeout=$TIMEOUT tier=$TIER" >&2
 
-TIMEOUT="${WENS_DISPATCH_TIMEOUT:-600}"
-dispatch-agent dispatch -f "$PROMPT" --timeout "$TIMEOUT" > "$OUT" 2>>"$OUT"
-exit $?
+run_once() {
+  agd dispatch -f "$PROMPT" --timeout "$TIMEOUT" > "$OUT" 2>>"$OUT"
+}
+
+run_once
+RC=$?
+
+# Empty-output / missing-frontmatter retry (one shot).
+if [ ! -s "$OUT" ] || ! grep -qE '^(---|status:)' "$OUT"; then
+  REASON=empty_output
+  [ -s "$OUT" ] && REASON=no_frontmatter
+  echo "retry=1 reason=$REASON" >&2
+  run_once
+  RC=$?
+fi
+
+exit $RC
