@@ -168,16 +168,30 @@ If they agree to the companion, read the detailed guide before proceeding:
 
 When the agent is running inside a `using-wens-superpowers` session (the orchestrator skill loaded this skill via auto-chain and declared `WENS_ORCHESTRATED=1` + `WENS_MODE=a|b` at session entry — the marker is carried by agent context, **not** by shell environment variables, since Bash tool calls do not share shells), perform an external spec-review loop after the inline self-review and **before** asking the user to review the spec.
 
+**Behavior reference.** The dispatch wrapper (`scripts/dispatch.sh`) handles timeout tiers, empty-output retry, and slug sanitization on its own. The reviewer prompt templates handle scope guard, severity vocabulary, and R2+ verify-only on their own. Main-agent responsibilities are limited to:
+
+1. Rendering placeholders (`{{spec_path}}`, `{{stage}}`, `{{round}}`, `{{prev_round}}`, `{{r1_issues_inline}}`).
+2. Stripping the unused round-block (Round-1 strips R2-PLUS-BLOCK; R2+ strips ROUND-1-BLOCK).
+3. Parsing reviewer out.md (tolerant rules above).
+4. Editing the spec file inline to apply confirmed findings.
+5. Deciding loop exit (PASS) vs continue (ISSUES_FOUND).
+6. Surfacing the round-10 gate via `AskUserQuestion`.
+
 **Loop body, round N (starts at 1, resets each fresh entry to brainstorming):**
 
 1. Render `skills/using-wens-superpowers/references/spec-review-prompt.md` by substituting `{{spec_path}}` (absolute) and `{{round}}` (`N`). Substitute inline — read the template with the Read tool, perform string substitution in your own context, do not run `sed`.
-2. Pipe the rendered prompt to `skills/using-wens-superpowers/scripts/dispatch.sh spec-review-r$N` via stdin. Set `WENS_DISPATCH_TIMEOUT=600` for this call.
+2. Pipe the rendered prompt to `skills/using-wens-superpowers/scripts/dispatch.sh spec-review-r$N` via stdin. Tier default is 900s (15 min) for spec-review; set `WENS_DISPATCH_TIMEOUT` only to override.
 3. The Bash tool's stderr output will contain `prompt=<path>` and `out=<path>` lines. Parse them. Then Read the `out=<path>` file.
 4. Parse the leading YAML frontmatter for `status`.
    - `status: PASS` → exit loop, proceed to user-review (step 8).
    - `status: ISSUES_FOUND` → for each issue, edit the spec file inline (you, the main agent, do the rewrites — do NOT dispatch them). Increment `N`. Repeat.
    - Frontmatter missing or malformed → treat as `ISSUES_FOUND` with a synthetic issue noting the format violation. Re-dispatch with a stricter reminder appended to the rendered prompt.
-   - `dispatch.sh` non-zero exit (including timeout) → treat as `ISSUES_FOUND` with a synthetic issue containing the stderr tail. Retry once. On second failure, surface to user via `AskUserQuestion`.
+   - `dispatch.sh` retries empty / no-frontmatter output internally (stderr will show `retry=1`). Main agent retries only on non-zero exit or post-retry format violation. On second failure surface to user via `AskUserQuestion`.
+
+From round 2 onward, the template enforces verify-only mode: new findings allowed only at severity `blocker`. The main agent strips the `<!-- ROUND-1-BLOCK -->...<!-- /ROUND-1-BLOCK -->` from the rendered template and keeps only `<!-- R2-PLUS-BLOCK -->...<!-- /R2-PLUS-BLOCK -->`. R1 issues are passed inline via `{{r1_issues_inline}}` — main agent extracts the issues section from the previous out.md and substitutes before dispatch. `{{prev_round}}` substitutes to `{{round}} - 1` as integer string.
+
+Parse out.md leniently: strip ```yaml fences if present; treat non-{blocker,major,minor} severities as `minor`; missing frontmatter → `ISSUES_FOUND` with synthetic format-violation issue.
+
 5. **Round 10 gate:** if `N` reaches 10 without `PASS`, use `AskUserQuestion` to ask the user: continue (resets counter, allows another 10), pause (return control), or accept-as-is (treat as PASS). Do not loop past 10 without user direction.
 
 **Auto-chain unchanged.** After the user-review gate (step 8) approves, continue to step 9 (invoke writing-plans) exactly as in standard mode.
