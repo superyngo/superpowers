@@ -133,18 +133,32 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Orchestrated Mode: Plan Verification Loop
 
-When the agent is running inside a `using-wens-superpowers` session (orchestrated mode — `WENS_ORCHESTRATED=1` declared at session entry; the marker is carried by agent context, not by shell env, since Bash tool calls do not share shells), run an external plan-vs-spec consistency check after Self-Review and **before** the Execution Handoff. Same loop shape as brainstorming's spec-review loop.
+When the agent is running inside a `using-wens-superpowers` session (the orchestrator skill loaded this skill via auto-chain and declared `WENS_ORCHESTRATED=1` + `WENS_MODE=a|b` at session entry — the marker is carried by agent context, **not** by shell environment variables, since Bash tool calls do not share shells), run an external plan-vs-spec consistency check after Self-Review and **before** the Execution Handoff. Same loop shape as brainstorming's spec-review loop.
 
-**Round N (starts at 1):**
+**Behavior reference.** The dispatch wrapper (`scripts/dispatch.sh`) handles timeout tiers, empty-output retry, and slug sanitization on its own. The reviewer prompt templates handle scope guard, severity vocabulary, and R2+ verify-only on their own. Main-agent responsibilities are limited to:
 
-1. Render `skills/using-wens-superpowers/references/plan-verify-prompt.md` by substituting `{{spec_path}}` (absolute), `{{plan_path}}` (absolute), and `{{round}}` (`N`). Inline substitution by the main agent — no `sed`.
-2. Pipe the rendered prompt to `skills/using-wens-superpowers/scripts/dispatch.sh plan-verify-r$N`. `WENS_DISPATCH_TIMEOUT=600`.
-3. Parse the `out=<path>` file's YAML frontmatter for `status`.
-   - `PASS` → exit loop, proceed to Execution Handoff.
-   - `ISSUES_FOUND` → main agent edits the plan inline, increment `N`, loop.
-   - Malformed frontmatter → synthesize `ISSUES_FOUND` with format-violation issue; re-dispatch with stricter reminder.
-   - Non-zero `dispatch.sh` exit → synthesize `ISSUES_FOUND` with stderr tail; retry once; on second failure `AskUserQuestion`.
-4. **Round 10 gate:** same as brainstorming — `AskUserQuestion` to continue / pause / accept-as-is. Per-stage counter, not shared with brainstorming.
+1. Rendering placeholders (`{{spec_path}}`, `{{plan_path}}`, `{{stage}}`, `{{plan_task_headers}}`, `{{round}}`, `{{prev_round}}`, `{{r1_issues_inline}}`).
+2. Stripping the unused round-block (Round-1 strips R2-PLUS-BLOCK; R2+ strips ROUND-1-BLOCK).
+3. Parsing reviewer out.md (tolerant rules above).
+4. Editing the plan file inline to apply confirmed findings.
+5. Deciding loop exit (PASS) vs continue (ISSUES_FOUND).
+6. Surfacing the round-10 gate via `AskUserQuestion`.
+
+**Loop body, round N (starts at 1, resets each fresh entry to writing-plans):**
+
+1. Render `skills/using-wens-superpowers/references/plan-verify-prompt.md` by substituting `{{spec_path}}` (absolute), `{{plan_path}}` (absolute), `{{round}}` (`N`), and `{{stage}}` (the literal string `plan`). For round 2+, also substitute `{{prev_round}}` (`N-1`) and `{{r1_issues_inline}}` (extracted issues block from the previous out.md). Substitute inline — read the template with the Read tool, perform string substitution in your own context, do not run `sed`. When rendering `plan-verify-prompt.md`, populate `{{plan_task_headers}}` with the output of `rg '^## Task ' <plan-file>`. This gives the reviewer scope context (used in the scope guard block).
+2. Pipe the rendered prompt to `skills/using-wens-superpowers/scripts/dispatch.sh plan-verify-r$N` via stdin. Tier default is 1200s (20 min) for plan-verify; set `WENS_DISPATCH_TIMEOUT` only to override.
+3. The Bash tool's stderr output will contain `prompt=<path>` and `out=<path>` lines. Parse them. Then Read the `out=<path>` file.
+4. Parse the leading YAML frontmatter for `status`.
+   - `status: PASS` → exit loop, proceed to Execution Handoff.
+   - `status: ISSUES_FOUND` → for each issue, edit the plan file inline (you, the main agent, do the rewrites — do NOT dispatch them). Increment `N`. Repeat.
+   - Frontmatter missing or malformed → `dispatch.sh` retries empty / no-frontmatter output internally (stderr will show `retry=1`). Treat the post-retry result as `ISSUES_FOUND` with a synthetic issue noting the format violation. Main agent retries only on non-zero exit or post-retry format violation. On second failure surface to user via `AskUserQuestion`.
+
+From round 2 onward, the template enforces verify-only mode: new findings allowed only at severity `blocker`. The main agent strips the `<!-- ROUND-1-BLOCK -->...<!-- /ROUND-1-BLOCK -->` from the rendered template and keeps only `<!-- R2-PLUS-BLOCK -->...<!-- /R2-PLUS-BLOCK -->`. R1 issues are passed inline via `{{r1_issues_inline}}` — main agent extracts the issues section from the previous out.md and substitutes before dispatch. `{{prev_round}}` substitutes to `{{round}} - 1` as integer string.
+
+Parse out.md leniently: strip ```yaml fences if present; treat non-{blocker,major,minor} severities as `minor`; missing frontmatter → `ISSUES_FOUND` with synthetic format-violation issue.
+
+5. **Round 10 gate:** if `N` reaches 10 without `PASS`, use `AskUserQuestion` to ask the user: continue (resets counter, allows another 10), pause (return control), or accept-as-is (treat as PASS). Do not loop past 10 without user direction.
 
 **Execution Handoff in orchestrated mode:** Do NOT call `AskUserQuestion` for execution mode. Auto-select Subagent-Driven (subagent-driven-development) — the orchestrator already collected the `WENS_MODE=a|b` choice at session start, and subagent-driven-development branches on that internally.
 
