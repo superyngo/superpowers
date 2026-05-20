@@ -294,29 +294,46 @@ etc.).
 
 ### 5.4 Block D — Round Discipline (4 reviewer templates)
 
-Same set as Block C. Inserted after severity block.
+Same set as Block C. The template carries **two alternative variants** —
+the main agent picks the appropriate one at render time based on the
+round number (it does not pass both to the LLM). `{{round}}` is rendered
+as an integer string (e.g. `1`, `2`, `3`).
+
+**Round-1 variant** (used when round == 1):
 
 ```markdown
-## Round Discipline
+## Round Discipline (Round 1)
 
-If `{{round}} == 1`:
-  Perform a focused review. Spot-check 3-5 load-bearing claims. Before
-  emitting any finding, grep to verify the file/symbol/line actually
-  exists.
-
-If `{{round}} >= 2`:
-  You are in **verify-only mode**. The R1 issues are listed below under
-  "R1 issues to verify". Confirm each is resolved
-  (`status: resolved | unresolved | partially-resolved`).
-  You MAY add NEW findings ONLY at severity `blocker`. Do NOT add `major`
-  or `minor` findings — those wait for the next iteration.
-
-  ### R1 issues to verify
-  {{r1_issues_inline}}
+Perform a focused review. Spot-check 3-5 load-bearing claims. Before
+emitting any finding, grep to verify the file/symbol/line actually
+exists.
 ```
 
-For round 1 dispatches, `{{r1_issues_inline}}` renders to the empty string;
-the conditional block is kept in the template so the LLM reads the rule.
+**R2+ variant** (used when round >= 2):
+
+```markdown
+## Round Discipline (Round {{round}} — verify-only)
+
+You are in **verify-only mode**. The previous-round issues are listed
+below under "R{{prev_round}} issues to verify". For each, confirm
+resolution: `resolved | unresolved | partially-resolved`. You MAY add
+NEW findings ONLY at severity `blocker`. Do NOT add `major` or `minor`
+findings — those wait for the next iteration.
+
+### R{{prev_round}} issues to verify
+{{r1_issues_inline}}
+```
+
+`{{prev_round}}` = `{{round}} - 1` rendered as integer string. The
+placeholder name `{{r1_issues_inline}}` is kept for backward
+compatibility — it always carries the **previous round's** issues, not
+literally R1.
+
+The two variants live as separate marked blocks in the template file
+(e.g. `<!-- ROUND-1-BLOCK -->` / `<!-- R2-PLUS-BLOCK -->`). The main
+agent reads the template, picks the matching block, and discards the
+other before substitution. Round-1 renders therefore never contain the
+empty `### R-prev issues to verify` heading.
 
 ### 5.5 Per-template block matrix
 
@@ -330,12 +347,13 @@ the conditional block is kept in the template so the LLM reads the rule.
 
 ### 5.6 New placeholders
 
-| Placeholder              | Filled by  | Source                                       |
-|--------------------------|------------|----------------------------------------------|
-| `{{stage}}`              | main agent | slug                                         |
-| `{{plan_task_headers}}`  | main agent | `rg '^## Task ' <plan-file>`                 |
-| `{{round}}`              | main agent | existing N counter                           |
-| `{{r1_issues_inline}}`   | main agent | R1 out.md issues section; empty for R1      |
+| Placeholder              | Filled by  | Source                                                                 |
+|--------------------------|------------|------------------------------------------------------------------------|
+| `{{stage}}`              | main agent | slug                                                                   |
+| `{{plan_task_headers}}`  | main agent | `rg '^## Task ' <plan-file>`                                           |
+| `{{round}}`              | main agent | integer string of N (e.g. `"1"`, `"2"`)                                |
+| `{{prev_round}}`         | main agent | integer string of N-1; used only in R2+ variant                        |
+| `{{r1_issues_inline}}`   | main agent | previous-round out.md issues section; R2+ variant only — never sent for round 1 |
 
 ## 6. `subagent-driven-development` orchestrated section
 
@@ -344,16 +362,17 @@ branch.
 
 ### 6.1 TaskCreate mandate
 
-Inserted at the top of the orchestrated section, before the first
-dispatch:
+Inserted at the top of the orchestrated section, **after** the cost
+estimate gate (§6.2) confirms the user wants to continue:
 
 ```markdown
 ## Orchestrated Mode — Task Tracking (MANDATORY)
 
-Before dispatching the first task, you MUST call `TaskCreate` once per
-plan task, using the plan's `## Task N:` header text as the task subject.
-This is not optional — the user cannot see your progress otherwise, and
-a context compaction loses your in-memory state.
+Once the cost estimate gate (mode b) returns "繼續" — or immediately in
+mode a — you MUST call `TaskCreate` once per plan task, using the plan's
+`## Task N:` header text as the task subject. This is not optional —
+the user cannot see your progress otherwise, and a context compaction
+loses your in-memory state.
 
 Use exactly this sequence per task:
 
@@ -375,17 +394,22 @@ use whatever the current harness exposes as `TaskCreate` /
 ```markdown
 ## Mode (b) Cost Estimate
 
-Before the first dispatch in mode (b), surface to the user:
+Before TaskCreate (§6.1) and before the first dispatch in mode (b),
+count the plan tasks by scanning the plan file:
+`N = $(rg -c '^## Task ' <plan-file>)`. Then surface to the user:
 
 > 「將透過 agd dispatch N 個 tasks，每個 task 含 1 implementer + 2
 >  reviewers = 3N 次 dispatch。預估 3N 次 agd 呼叫，不含 review 迭代。
 >  確認繼續嗎？」
 
 Use AskUserQuestion with options: 繼續 / 中止 / 改用 mode (a).
-N is taken from the TaskList count.
+On abort, no TaskCreate has yet been made, so no cleanup needed.
+On "改用 mode (a)" the main agent re-enters the orchestrated branch
+under mode (a), which skips this gate but still runs §6.1.
 ```
 
-Mode (a) does not perform this gate.
+Mode (a) does not perform this gate. Ordering is therefore:
+**plan in hand → cost-gate (mode b only) → TaskCreate → first dispatch.**
 
 ### 6.3 Reviewer dispatch — passing plan task headers
 
@@ -618,8 +642,8 @@ test "$(rg -n 'dispatch-agent' skills/ | wc -l)" -eq 0
 # B. agd present in orchestrator
 rg -q '`agd`' skills/using-wens-superpowers/SKILL.md
 
-# C. dispatch.sh syntax + tokens
-bash -n skills/using-wens-superpowers/scripts/dispatch.sh
+# C. dispatch.sh syntax + tokens (interpreter-matched: shebang is /bin/sh)
+sh -n skills/using-wens-superpowers/scripts/dispatch.sh
 rg -q 'tier=' skills/using-wens-superpowers/scripts/dispatch.sh
 rg -q 'retry=1 reason=' skills/using-wens-superpowers/scripts/dispatch.sh
 
@@ -741,7 +765,8 @@ rg -q 'timeout=1800 tier=implement' /tmp/stderr2.log
 | Reviewer still violates scope guard (LLM drift) | Medium | Low | Scope guard + plan task list both present; main agent judgment final |
 | R2+ verify-only misses a real new blocker | Low | Medium | §5.4 D explicitly allows new blocker findings |
 | TaskCreate API renamed by harness | Low | Low | SKILL.md says "whatever current harness exposes" |
-| Empty-output false positive (legit short PASS) | Very low | Low | Empty-check uses `! -s` (zero bytes only); any frontmatter-bearing response satisfies the secondary `grep` clause |
+| Empty-output false positive (legit short PASS) | Very low | Low | Empty-check uses `! -s` (zero bytes only). The secondary `grep -E '^(---|status:)'` is an OR: any output containing **either** pattern on any line passes, so false positives require an output that is both non-empty and contains neither token — extremely unlikely for any valid YAML response. |
+| `agd` stderr noise contaminates `OUT` file (current `2>>"$OUT"` redirect keeps the existing dispatch-agent convention) | Low | Low — **accepted** | The grep detector scans every line in the file, so stderr lines never starting with `^---` or `^status:` do not prevent YAML detection. Tolerant parsing (§6.5) strips noise around the frontmatter. Splitting stderr to a sidecar is out of scope; if real agd stderr noise causes parse failures in practice, raise a follow-up. |
 
 ### 10.3 Rollback
 
