@@ -179,7 +179,7 @@ When the agent is running inside a `using-wens-superpowers` session (the orchest
 
 **Loop body, round N (starts at 1, resets each fresh entry to brainstorming):**
 
-1. Render `skills/using-wens-superpowers/references/spec-review-prompt.md` by substituting `{{spec_path}}` (absolute) and `{{round}}` (`N`). Substitute inline — read the template with the Read tool, perform string substitution in your own context, do not run `sed`.
+1. Render `skills/using-wens-superpowers/references/spec-review-prompt.md` by substituting `{{spec_path}}` (absolute), `{{round}}` (`N`), and `{{stage}}` (the literal string `spec`). For round 2+, also substitute `{{prev_round}}` (`N-1`) and `{{r1_issues_inline}}` (extracted issues block from the previous out.md). Substitute inline — read the template with the Read tool, perform string substitution in your own context, do not run `sed`.
 2. Pipe the rendered prompt to `skills/using-wens-superpowers/scripts/dispatch.sh spec-review-r$N` via stdin. Tier default is 900s (15 min) for spec-review; set `WENS_DISPATCH_TIMEOUT` only to override.
 3. The Bash tool's stderr output will contain `prompt=<path>` and `out=<path>` lines. Parse them. Then Read the `out=<path>` file.
 4. Parse the leading YAML frontmatter for `status`.
