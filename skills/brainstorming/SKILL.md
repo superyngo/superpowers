@@ -185,8 +185,7 @@ When the agent is running inside a `using-wens-superpowers` session (the orchest
 4. Parse the leading YAML frontmatter for `status`.
    - `status: PASS` → exit loop, proceed to user-review (step 8).
    - `status: ISSUES_FOUND` → for each issue, edit the spec file inline (you, the main agent, do the rewrites — do NOT dispatch them). Increment `N`. Repeat.
-   - Frontmatter missing or malformed → treat as `ISSUES_FOUND` with a synthetic issue noting the format violation. Re-dispatch with a stricter reminder appended to the rendered prompt.
-   - `dispatch.sh` retries empty / no-frontmatter output internally (stderr will show `retry=1`). Main agent retries only on non-zero exit or post-retry format violation. On second failure surface to user via `AskUserQuestion`.
+   - Frontmatter missing or malformed → `dispatch.sh` retries empty / no-frontmatter output internally (stderr will show `retry=1`). Treat the post-retry result as `ISSUES_FOUND` with a synthetic issue noting the format violation. Main agent retries only on non-zero exit or post-retry format violation. On second failure surface to user via `AskUserQuestion`.
 
 From round 2 onward, the template enforces verify-only mode: new findings allowed only at severity `blocker`. The main agent strips the `<!-- ROUND-1-BLOCK -->...<!-- /ROUND-1-BLOCK -->` from the rendered template and keeps only `<!-- R2-PLUS-BLOCK -->...<!-- /R2-PLUS-BLOCK -->`. R1 issues are passed inline via `{{r1_issues_inline}}` — main agent extracts the issues section from the previous out.md and substitutes before dispatch. `{{prev_round}}` substitutes to `{{round}} - 1` as integer string.
 
