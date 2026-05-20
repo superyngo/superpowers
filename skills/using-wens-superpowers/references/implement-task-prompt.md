@@ -6,6 +6,17 @@ You are implementing one task from an approved implementation plan. The main coo
 **Spec:** `{{spec_path}}`
 **Plan:** `{{plan_path}}`
 
+The current stage is `{{stage}}`.
+
+## Scope Guard (MUST FOLLOW)
+
+ONLY review work belonging to **this specific {{stage}}**. Do NOT flag:
+- Work that other tasks in the plan will handle later (see "Other tasks in plan" below).
+- Pre-existing code outside what this {{stage}} changed.
+- Style nits in files this {{stage}} did not touch.
+
+When in doubt about whether a finding is in scope, omit it.
+
 ## Task to implement
 
 {{task_body}}
