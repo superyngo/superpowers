@@ -91,15 +91,25 @@ skills; other skills; harness wrappers.
 
 ## 4. dispatch.sh
 
-### 4.1 Interface (unchanged)
+### 4.1 Interface
 
-- stdin: rendered prompt
 - argv[1]: slug (e.g. `spec-review-r1`, `implement-task3`,
   `code-review-task5`)
+- stdin: rendered prompt (written by `dispatch.sh` to
+  `docs/tmp/<base>.md`, then passed to `agd` via `-f`)
 - stderr: `prompt=<path>` and `out=<path>` lines (existing main-agent
-  parser keeps working)
-- stdout: raw agd output for live observation
-- exit code: 0 on success, 127 if `agd` not found
+  parser keeps working), plus new `timeout=... tier=...` and optional
+  `retry=1 reason=...`
+- stdout from agd: redirected to `<base>.out.md` (existing convention;
+  combined with stderr via `2>>"$OUT"`)
+- exit code: mirrors agd's; 127 if `agd` not on `PATH`; 2 on malformed
+  argv
+
+**Invocation pattern** (matches the existing `dispatch-agent dispatch -f
+<prompt> --timeout <s>` interface): `agd dispatch -f "$PROMPT"
+--timeout "$TIMEOUT"`. See §10.4 OQ for compatibility verification at
+plan stage — if `agd`'s flag names differ, `dispatch.sh` adapts; no
+spec change needed.
 
 ### 4.2 New stderr lines
 
@@ -124,8 +134,9 @@ Override priority: `WENS_DISPATCH_TIMEOUT` env var → tier default.
 ### 4.4 Empty-output retry
 
 Trigger (OR):
-1. `out.md` size < 10 bytes
-2. `out.md` does not contain `^---` or `^status:` (no YAML frontmatter)
+1. `out.md` is empty (POSIX `! -s`).
+2. `out.md` does not contain `^---` or `^status:` anywhere (no YAML
+   frontmatter).
 
 Behavior: identical prompt re-sent once. stderr emits
 `retry=1 reason=<empty_output|no_frontmatter>`. Second failure is not
@@ -148,45 +159,76 @@ proceed at own risk / abort / switch to mode (a).
 
 ### 4.6 Reference skeleton
 
+Mirrors the existing dispatch.sh structure (REPO_ROOT, sed-based slug
+sanitizer, agd invoked with `dispatch -f` and `--timeout`); adds tier
+table and post-call empty-output retry.
+
 ```sh
-#!/usr/bin/env sh
-set -eu
+#!/bin/sh
+# dispatch.sh — wraps `agd dispatch -f` for using-wens-superpowers.
+# Reads prompt from stdin; writes prompt + .out.md to
+# docs/tmp/<ts>_<pid>-<slug>.{md,out.md}. Emits prompt=, out=,
+# timeout=, tier= on stderr (+ retry= on retry). Exit code mirrors agd
+# (127 if not on PATH, 2 if argv malformed). Override per-call via
+# WENS_DISPATCH_TIMEOUT.
+set -u
 
-slug=$(printf '%s' "${1:?slug required}" | tr -c 'A-Za-z0-9._-' '_')
-ts=$(date -u +%Y%m%dT%H%M%SZ)
-pid=$$
-artdir="docs/tmp"
-mkdir -p "$artdir"
-prompt_file="$artdir/${ts}_${pid}-${slug}.md"
-out_file="$artdir/${ts}_${pid}-${slug}.out.md"
+SLUG="${1:-}"
+if [ -z "$SLUG" ]; then
+  echo "dispatch.sh: missing <phase-slug> argument" >&2
+  echo "usage: cat prompt.md | dispatch.sh <phase-slug>" >&2
+  exit 2
+fi
 
-cat > "$prompt_file"
+if ! command -v agd >/dev/null 2>&1; then
+  echo "dispatch.sh: 'agd' not found on PATH." >&2
+  echo "  Install it (https://github.com/superyngo/agd)" >&2
+  echo "  and ensure it is on \$PATH before re-running." >&2
+  exit 127
+fi
 
-case "$slug" in
-  spec-review*)            tier=spec-review;  default=900  ;;
-  plan-verify*)            tier=plan-verify;  default=1200 ;;
-  implement-task*)         tier=implement;    default=1800 ;;
-  spec-compliance-review*|code-review*) tier=review; default=900 ;;
-  *)                       tier=review;       default=900  ;;
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+TMPDIR_ABS="$REPO_ROOT/docs/tmp"
+mkdir -p "$TMPDIR_ABS"
+
+SLUG=$(printf '%s' "$SLUG" | sed 's/[^A-Za-z0-9._-]/-/g')
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+BASE="${TS}_$$-${SLUG}"
+PROMPT="$TMPDIR_ABS/${BASE}.md"
+OUT="$TMPDIR_ABS/${BASE}.out.md"
+
+cat > "$PROMPT"
+
+case "$SLUG" in
+  spec-review*)                          TIER=spec-review;  DEFAULT=900  ;;
+  plan-verify*)                          TIER=plan-verify;  DEFAULT=1200 ;;
+  implement-task*)                       TIER=implement;    DEFAULT=1800 ;;
+  spec-compliance-review*|code-review*)  TIER=review;       DEFAULT=900  ;;
+  *)                                     TIER=review;       DEFAULT=900  ;;
 esac
-timeout_s="${WENS_DISPATCH_TIMEOUT:-$default}"
+TIMEOUT="${WENS_DISPATCH_TIMEOUT:-$DEFAULT}"
 
-echo "prompt=$prompt_file" >&2
-echo "out=$out_file"       >&2
-echo "timeout=$timeout_s tier=$tier" >&2
+echo "prompt=$PROMPT" >&2
+echo "out=$OUT" >&2
+echo "timeout=$TIMEOUT tier=$TIER" >&2
 
 run_once() {
-  command -v agd >/dev/null || { echo "agd not found on PATH" >&2; exit 127; }
-  timeout "$timeout_s" agd < "$prompt_file" > "$out_file"
+  agd dispatch -f "$PROMPT" --timeout "$TIMEOUT" > "$OUT" 2>>"$OUT"
 }
 
-run_once || true
+run_once
+RC=$?
 
-if [ ! -s "$out_file" ] || ! grep -qE '^(---|status:)' "$out_file"; then
-  reason=$( [ ! -s "$out_file" ] && echo empty_output || echo no_frontmatter )
-  echo "retry=1 reason=$reason" >&2
-  run_once || true
+# Empty-output / missing-frontmatter retry (one shot).
+if [ ! -s "$OUT" ] || ! grep -qE '^(---|status:)' "$OUT"; then
+  REASON=empty_output
+  [ -s "$OUT" ] && REASON=no_frontmatter
+  echo "retry=1 reason=$REASON" >&2
+  run_once
+  RC=$?
 fi
+
+exit $RC
 ```
 
 ## 5. Reviewer prompt templates
@@ -606,8 +648,11 @@ rg -q 'ephemeral|system tmp' skills/using-wens-superpowers/SKILL.md
 ### 9.2 dispatch.sh smoke (fake-agd)
 
 ```sh
-cat > /tmp/fake-agd-empty.sh <<'EOF'
+cat > /tmp/fake-agd.sh <<'EOF'
 #!/usr/bin/env sh
+# Mimics `agd dispatch -f <prompt> --timeout <s>` interface.
+# First call: exit 0 with no output (triggers retry).
+# Second call: emit canonical PASS frontmatter.
 state_file=/tmp/fake-agd-state
 if [ -f "$state_file" ]; then
   printf -- '---\nstatus: PASS\n---\n'
@@ -616,10 +661,11 @@ else
   :  # exit 0 with no output
 fi
 EOF
-chmod +x /tmp/fake-agd-empty.sh
+chmod +x /tmp/fake-agd.sh
 rm -f /tmp/fake-agd-state
-ln -sf /tmp/fake-agd-empty.sh /tmp/agd
-PATH="/tmp:$PATH"
+mkdir -p /tmp/fake-agd-bin
+ln -sf /tmp/fake-agd.sh /tmp/fake-agd-bin/agd
+PATH="/tmp/fake-agd-bin:$PATH"
 
 echo "test" | sh skills/using-wens-superpowers/scripts/dispatch.sh \
   spec-review-r1 2> /tmp/stderr.log
@@ -695,7 +741,7 @@ rg -q 'timeout=1800 tier=implement' /tmp/stderr2.log
 | Reviewer still violates scope guard (LLM drift) | Medium | Low | Scope guard + plan task list both present; main agent judgment final |
 | R2+ verify-only misses a real new blocker | Low | Medium | §5.4 D explicitly allows new blocker findings |
 | TaskCreate API renamed by harness | Low | Low | SKILL.md says "whatever current harness exposes" |
-| Empty-output false positive (legit short PASS) | Very low | Low | Threshold < 10 bytes; canonical frontmatter is > 20 bytes |
+| Empty-output false positive (legit short PASS) | Very low | Low | Empty-check uses `! -s` (zero bytes only); any frontmatter-bearing response satisfies the secondary `grep` clause |
 
 ### 10.3 Rollback
 
@@ -706,8 +752,9 @@ revertable. No backup of old `dispatch-agent` binary in repo.
 ### 10.4 Open questions (resolve during plan/implement)
 
 1. Exact `agd --help` flag name for bypass — adjust probe regex.
-2. Confirm `agd` reads prompt from stdin (compat with current
-   dispatch.sh).
+2. Confirm `agd` accepts the existing dispatch-agent invocation
+   pattern `agd dispatch -f <file> --timeout <s>`. If flag names
+   differ, adapt `dispatch.sh` at implement time without spec change.
 3. Existing files in `docs/tmp/` not cleaned by this PR — user decides.
 
 ## 11. Evaluation: dispatched spec/plan writing
